@@ -1,0 +1,766 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Miner Cat - Game Menambang</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            font-family: 'Arial', sans-serif;
+        }
+        
+        #gameContainer {
+            text-align: center;
+            background: rgba(255, 255, 255, 0.95);
+            padding: 20px;
+            border-radius: 20px;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
+            position: relative;
+        }
+        
+        #gameCanvas {
+            border: 4px solid #333;
+            border-radius: 10px;
+            display: block;
+            margin: 10px auto;
+            background: #87CEEB;
+        }
+        
+        #hud {
+            display: flex;
+            justify-content: space-around;
+            margin: 15px 0;
+            font-size: 18px;
+            font-weight: bold;
+            color: #333;
+            flex-wrap: wrap;
+            gap: 10px;
+        }
+        
+        .stat {
+            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+            padding: 10px 20px;
+            border-radius: 10px;
+            color: white;
+            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.2);
+            min-width: 140px;
+        }
+        
+        #controls {
+            margin-top: 15px;
+            color: #555;
+            font-size: 14px;
+            line-height: 1.6;
+        }
+        
+        #gameOver {
+            display: none;
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(0, 0, 0, 0.9);
+            color: white;
+            padding: 40px;
+            border-radius: 20px;
+            text-align: center;
+            z-index: 100;
+            min-width: 300px;
+        }
+        
+        #gameOver button {
+            margin-top: 20px;
+            padding: 15px 30px;
+            font-size: 18px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 10px;
+            cursor: pointer;
+            font-weight: bold;
+            transition: transform 0.2s;
+        }
+        
+        #gameOver button:hover {
+            transform: scale(1.05);
+        }
+        
+        .key {
+            display: inline-block;
+            background: #333;
+            color: white;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-family: monospace;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+    <div id="gameContainer">
+        <h1>🐱 Miner Cat ⛏️</h1>
+        <div id="hud">
+            <div class="stat">💰 Koin: <span id="score">0</span></div>
+            <div class="stat">⬇️ Kedalaman: <span id="depth">0</span>m</div>
+            <div class="stat">⚡ Energi: <span id="energy">100</span></div>
+        </div>
+        <canvas id="gameCanvas" width="600" height="500"></canvas>
+        <div id="controls">
+            <p>
+                <span class="key">↑</span> <span class="key">↓</span> 
+                <span class="key">←</span> <span class="key">→</span> atau 
+                <span class="key">W</span> <span class="key">A</span> 
+                <span class="key">S</span> <span class="key">D</span> untuk bergerak
+            </p>
+            <p>Tabrak blok untuk menambangnya! 💎 Semakin dalam = semakin berharga</p>
+        </div>
+    </div>
+    
+    <div id="gameOver">
+        <h2>💀 Game Over!</h2>
+        <p id="finalScore"></p>
+        <button onclick="restartGame()">🔄 Main Lagi</button>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Game state
+        let game = {
+            score: 0,
+            depth: 0,
+            energy: 100,
+            maxEnergy: 100,
+            gameOver: false
+        };
+        
+        // Grid settings
+        const gridSize = 40;
+        const cols = Math.floor(canvas.width / gridSize);  // 15
+        const rows = Math.floor(canvas.height / gridSize);  // 12
+        
+        // Cat player (grid-based)
+        let cat = {
+            col: 7,           // kolom grid
+            row: 1,           // baris grid
+            targetCol: 7,     // target kolom untuk animasi
+            targetRow: 1,     // target baris untuk animasi
+            drawX: 7 * gridSize,  // posisi draw untuk smooth animation
+            drawY: 1 * gridSize,
+            facing: 'down',   // arah hadap
+            moving: false,
+            moveTimer: 0
+        };
+        
+        // Block types
+        const BLOCK_TYPES = {
+            EMPTY: 0,
+            GRASS: 1,
+            DIRT: 2,
+            STONE: 3,
+            GOLD: 4,
+            DIAMOND: 5,
+            RUBY: 6
+        };
+        
+        // Block values (semakin dalam semakin berharga)
+        const BLOCK_VALUES = {
+            [BLOCK_TYPES.GRASS]: 1,
+            [BLOCK_TYPES.DIRT]: 2,
+            [BLOCK_TYPES.STONE]: 5,
+            [BLOCK_TYPES.GOLD]: 15,
+            [BLOCK_TYPES.DIAMOND]: 30,
+            [BLOCK_TYPES.RUBY]: 60
+        };
+        
+        // Block colors
+        const BLOCK_COLORS = {
+            [BLOCK_TYPES.GRASS]: '#4CAF50',
+            [BLOCK_TYPES.DIRT]: '#8B4513',
+            [BLOCK_TYPES.STONE]: '#696969',
+            [BLOCK_TYPES.GOLD]: '#FFD700',
+            [BLOCK_TYPES.DIAMOND]: '#00CED1',
+            [BLOCK_TYPES.RUBY]: '#DC143C'
+        };
+        
+        // Movement cooldown (ms)
+        const MOVE_COOLDOWN = 120;
+        
+        // Grid
+        let grid = [];
+        
+        // Initialize grid dengan pola yang lebih menarik
+        function initGrid() {
+            grid = [];
+            for (let row = 0; row < rows; row++) {
+                grid[row] = [];
+                for (let col = 0; col < cols; col++) {
+                    if (row === 0) {
+                        // Langit kosong
+                        grid[row][col] = BLOCK_TYPES.EMPTY;
+                    } else if (row === 1) {
+                        // Rumput di permukaan
+                        grid[row][col] = BLOCK_TYPES.GRASS;
+                    } else {
+                        // Generate blok dengan rarity berdasarkan kedalaman
+                        let rand = Math.random();
+                        let depthFactor = (row - 1) / rows; // 0 sampai 1
+                        
+                        if (rand < 0.005 + depthFactor * 0.015) {
+                            grid[row][col] = BLOCK_TYPES.RUBY;
+                        } else if (rand < 0.02 + depthFactor * 0.03) {
+                            grid[row][col] = BLOCK_TYPES.DIAMOND;
+                        } else if (rand < 0.07 + depthFactor * 0.08) {
+                            grid[row][col] = BLOCK_TYPES.GOLD;
+                        } else if (rand < 0.3 + depthFactor * 0.2) {
+                            grid[row][col] = BLOCK_TYPES.STONE;
+                        } else {
+                            grid[row][col] = BLOCK_TYPES.DIRT;
+                        }
+                    }
+                }
+            }
+            
+            // Pastikan area start kucing kosong (2 baris pertama di kolom start)
+            grid[0][cat.col] = BLOCK_TYPES.EMPTY;
+            grid[1][cat.col] = BLOCK_TYPES.EMPTY;
+            // Buat sedikit ruang di sekitar start
+            grid[1][cat.col - 1] = BLOCK_TYPES.EMPTY;
+            grid[1][cat.col + 1] = BLOCK_TYPES.EMPTY;
+        }
+        
+        // Draw cat dengan detail
+        function drawCat(x, y) {
+            ctx.save();
+            ctx.translate(x + gridSize / 2, y + gridSize / 2);
+            
+            // Flip berdasarkan arah hadap
+            if (cat.facing === 'left') {
+                ctx.scale(-1, 1);
+            }
+            
+            // Body (orange cat)
+            ctx.fillStyle = '#FF8C42';
+            ctx.beginPath();
+            ctx.ellipse(0, 4, 16, 14, 0, 0, Math.PI * 2);
+            ctx.fill();
+            
+            // Stripes
+            ctx.strokeStyle = '#D2691E';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.moveTo(-10, -2);
+            ctx.lineTo(-10, 10);
+            ctx.moveTo(-4, -4);
+            ctx.lineTo(-4, 12);
+            ctx.moveTo(4, -4);
+            ctx.lineTo(4, 12);
+            ctx.moveTo(10, -2);
+            ctx.lineTo(10, 10);
+            ctx.stroke();
+            
+            // Head
+            ctx.fillStyle = '#FF8C42';
+            ctx.beginPath();
+            ctx.arc(0, -8, 12, 0, Math.PI * 2);
+            ctx.fill();
+            
+            // Ears
+            ctx.fillStyle = '#FF8C42';
+            ctx.beginPath();
+            ctx.moveTo(-10, -14);
+            ctx.lineTo(-6, -20);
+            ctx.lineTo(-3, -14);
+            ctx.closePath();
+            ctx.fill();
+            
+            ctx.beginPath();
+            ctx.moveTo(10, -14);
+            ctx.lineTo(6, -20);
+            ctx.lineTo(3, -14);
+            ctx.closePath();
+            ctx.fill();
+            
+            // Inner ears
+            ctx.fillStyle = '#FFB6C1';
+            ctx.beginPath();
+            ctx.moveTo(-8, -15);
+            ctx.lineTo(-6, -18);
+            ctx.lineTo(-4, -15);
+            ctx.closePath();
+            ctx.fill();
+            
+            ctx.beginPath();
+            ctx.moveTo(8, -15);
+            ctx.lineTo(6, -18);
+            ctx.lineTo(4, -15);
+            ctx.closePath();
+            ctx.fill();
+            
+            // Eyes
+            ctx.fillStyle = '#FFFFFF';
+            ctx.beginPath();
+            ctx.arc(-4, -9, 3, 0, Math.PI * 2);
+            ctx.arc(4, -9, 3, 0, Math.PI * 2);
+            ctx.fill();
+            
+            ctx.fillStyle = '#000000';
+            ctx.beginPath();
+            ctx.arc(-4, -9, 1.5, 0, Math.PI * 2);
+            ctx.arc(4, -9, 1.5, 0, Math.PI * 2);
+            ctx.fill();
+            
+            // Nose
+            ctx.fillStyle = '#FF69B4';
+            ctx.beginPath();
+            ctx.moveTo(0, -5);
+            ctx.lineTo(-2, -3);
+            ctx.lineTo(2, -3);
+            ctx.closePath();
+            ctx.fill();
+            
+            // Mouth
+            ctx.strokeStyle = '#000000';
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.moveTo(0, -3);
+            ctx.lineTo(0, -1);
+            ctx.moveTo(-2, -1);
+            ctx.quadraticCurveTo(0, 1, 2, -1);
+            ctx.stroke();
+            
+            // Whiskers
+            ctx.strokeStyle = '#000000';
+            ctx.lineWidth = 0.8;
+            ctx.beginPath();
+            ctx.moveTo(-5, -3);
+            ctx.lineTo(-12, -5);
+            ctx.moveTo(-5, -2);
+            ctx.lineTo(-12, -2);
+            ctx.moveTo(5, -3);
+            ctx.lineTo(12, -5);
+            ctx.moveTo(5, -2);
+            ctx.lineTo(12, -2);
+            ctx.stroke();
+            
+            // Miner hat (helm tambang)
+            ctx.fillStyle = '#FFD700';
+            ctx.beginPath();
+            ctx.arc(0, -14, 10, Math.PI, 0);
+            ctx.fill();
+            
+            // Headlamp
+            ctx.fillStyle = '#C0C0C0';
+            ctx.fillRect(-4, -18, 8, 4);
+            ctx.fillStyle = '#FFFF00';
+            ctx.beginPath();
+            ctx.arc(0, -16, 2, 0, Math.PI * 2);
+            ctx.fill();
+            
+            // Pickaxe
+            ctx.strokeStyle = '#8B4513';
+            ctx.lineWidth = 3;
+            ctx.beginPath();
+            ctx.moveTo(12, 0);
+            ctx.lineTo(20, -8);
+            ctx.stroke();
+            
+            ctx.fillStyle = '#808080';
+            ctx.beginPath();
+            ctx.moveTo(18, -10);
+            ctx.lineTo(24, -6);
+            ctx.lineTo(22, -4);
+            ctx.lineTo(16, -8);
+            ctx.closePath();
+            ctx.fill();
+            
+            ctx.restore();
+        }
+        
+        // Draw grid
+        function drawGrid() {
+            for (let row = 0; row < rows; row++) {
+                for (let col = 0; col < cols; col++) {
+                    let block = grid[row][col];
+                    let x = col * gridSize;
+                    let y = row * gridSize;
+                    
+                    if (block === BLOCK_TYPES.EMPTY) {
+                        // Background gradient untuk kedalaman
+                        if (row === 0) {
+                            ctx.fillStyle = '#87CEEB';
+                        } else {
+                            let depthShade = Math.min(0.4, (row - 1) * 0.03);
+                            ctx.fillStyle = `rgb(${139 - depthShade * 100}, ${115 - depthShade * 80}, ${85 - depthShade * 60})`;
+                        }
+                        ctx.fillRect(x, y, gridSize, gridSize);
+                    } else {
+                        // Draw block
+                        ctx.fillStyle = BLOCK_COLORS[block];
+                        ctx.fillRect(x, y, gridSize, gridSize);
+                        
+                        // Texture detail
+                        ctx.strokeStyle = 'rgba(0, 0, 0, 0.3)';
+                        ctx.lineWidth = 2;
+                        ctx.strokeRect(x + 1, y + 1, gridSize - 2, gridSize - 2);
+                        
+                        // Highlight
+                        ctx.fillStyle = 'rgba(255, 255, 255, 0.2)';
+                        ctx.fillRect(x + 2, y + 2, gridSize - 4, 4);
+                        ctx.fillRect(x + 2, y + 2, 4, gridSize - 4);
+                        
+                        // Detail khusus untuk tiap blok
+                        if (block === BLOCK_TYPES.GRASS) {
+                            ctx.fillStyle = '#228B22';
+                            ctx.fillRect(x, y, gridSize, 6);
+                            // Rumput detail
+                            ctx.strokeStyle = '#228B22';
+                            ctx.lineWidth = 1;
+                            for (let i = 0; i < 5; i++) {
+                                ctx.beginPath();
+                                ctx.moveTo(x + i * 8 + 4, y);
+                                ctx.lineTo(x + i * 8 + 4, y - 3);
+                                ctx.stroke();
+                            }
+                        } else if (block === BLOCK_TYPES.STONE) {
+                            ctx.strokeStyle = 'rgba(0, 0, 0, 0.4)';
+                            ctx.lineWidth = 1;
+                            ctx.beginPath();
+                            ctx.moveTo(x + 10, y + 10);
+                            ctx.lineTo(x + 25, y + 15);
+                            ctx.moveTo(x + 15, y + 25);
+                            ctx.lineTo(x + 30, y + 30);
+                            ctx.stroke();
+                        } else if (block === BLOCK_TYPES.GOLD) {
+                            ctx.fillStyle = '#FFA500';
+                            ctx.beginPath();
+                            ctx.arc(x + 15, y + 15, 4, 0, Math.PI * 2);
+                            ctx.arc(x + 28, y + 25, 3, 0, Math.PI * 2);
+                            ctx.fill();
+                            // Sparkle
+                            ctx.fillStyle = 'rgba(255, 255, 255, 0.8)';
+                            ctx.fillRect(x + 10, y + 10, 3, 3);
+                        } else if (block === BLOCK_TYPES.DIAMOND) {
+                            // Diamond shape
+                            ctx.fillStyle = '#E0FFFF';
+                            ctx.beginPath();
+                            ctx.moveTo(x + 20, y + 10);
+                            ctx.lineTo(x + 30, y + 20);
+                            ctx.lineTo(x + 20, y + 30);
+                            ctx.lineTo(x + 10, y + 20);
+                            ctx.closePath();
+                            ctx.fill();
+                            ctx.strokeStyle = '#008B8B';
+                            ctx.lineWidth = 1;
+                            ctx.stroke();
+                            // Sparkle
+                            ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
+                            ctx.fillRect(x + 18, y + 15, 2, 2);
+                        } else if (block === BLOCK_TYPES.RUBY) {
+                            ctx.fillStyle = '#FF1493';
+                            ctx.beginPath();
+                            ctx.moveTo(x + 20, y + 12);
+                            ctx.lineTo(x + 28, y + 20);
+                            ctx.lineTo(x + 20, y + 28);
+                            ctx.lineTo(x + 12, y + 20);
+                            ctx.closePath();
+                            ctx.fill();
+                            ctx.strokeStyle = '#8B0000';
+                            ctx.lineWidth = 1;
+                            ctx.stroke();
+                            // Sparkle
+                            ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
+                            ctx.fillRect(x + 18, y + 16, 2, 2);
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Check apakah cell bisa ditempati (kosong)
+        function isEmpty(col, row) {
+            if (col < 0 || col >= cols || row < 0 || row >= rows) return false;
+            return grid[row][col] === BLOCK_TYPES.EMPTY;
+        }
+        
+        // Particles
+        let particles = [];
+        
+        function createParticles(x, y, color, count = 10) {
+            for (let i = 0; i < count; i++) {
+                particles.push({
+                    x: x,
+                    y: y,
+                    vx: (Math.random() - 0.5) * 6,
+                    vy: (Math.random() - 0.5) * 6 - 2,
+                    life: 30,
+                    maxLife: 30,
+                    color: color,
+                    size: 3 + Math.random() * 3
+                });
+            }
+        }
+        
+        // Floating text untuk score
+        let floatingTexts = [];
+        
+        function createFloatingText(x, y, text, color) {
+            floatingTexts.push({
+                x: x,
+                y: y,
+                text: text,
+                color: color,
+                life: 40,
+                vy: -1.5
+            });
+        }
+        
+        function updateParticles() {
+            for (let i = particles.length - 1; i >= 0; i--) {
+                let p = particles[i];
+                p.x += p.vx;
+                p.y += p.vy;
+                p.vy += 0.3;
+                p.life--;
+                if (p.life <= 0) particles.splice(i, 1);
+            }
+            
+            for (let i = floatingTexts.length - 1; i >= 0; i--) {
+                let t = floatingTexts[i];
+                t.y += t.vy;
+                t.life--;
+                if (t.life <= 0) floatingTexts.splice(i, 1);
+            }
+        }
+        
+        function drawParticles() {
+            for (let p of particles) {
+                ctx.fillStyle = p.color;
+                ctx.globalAlpha = p.life / p.maxLife;
+                ctx.fillRect(p.x - p.size / 2, p.y - p.size / 2, p.size, p.size);
+            }
+            ctx.globalAlpha = 1;
+            
+            for (let t of floatingTexts) {
+                ctx.fillStyle = t.color;
+                ctx.globalAlpha = t.life / 40;
+                ctx.font = 'bold 16px Arial';
+                ctx.textAlign = 'center';
+                ctx.fillText(t.text, t.x, t.y);
+            }
+            ctx.globalAlpha = 1;
+        }
+        
+        // Update HUD
+        function updateHUD() {
+            document.getElementById('score').textContent = game.score;
+            document.getElementById('depth').textContent = Math.floor(game.depth);
+            document.getElementById('energy').textContent = Math.max(0, Math.floor(game.energy));
+        }
+        
+        // Input handling
+        let keys = {};
+        let lastMoveTime = 0;
+        
+        document.addEventListener('keydown', (e) => {
+            keys[e.key.toLowerCase()] = true;
+            // Prevent scroll dengan arrow keys
+            if (['arrowup', 'arrowdown', 'arrowleft', 'arrowright', ' '].includes(e.key.toLowerCase())) {
+                e.preventDefault();
+            }
+        });
+        
+        document.addEventListener('keyup', (e) => {
+            keys[e.key.toLowerCase()] = false;
+        });
+        
+        // Try move - return true if berhasil move/mine
+        function tryMove(dCol, dRow, facing) {
+            cat.facing = facing;
+            let newCol = cat.col + dCol;
+            let newRow = cat.row + dRow;
+            
+            // Check bounds
+            if (newCol < 0 || newCol >= cols || newRow < 0 || newRow >= rows) {
+                return false;
+            }
+            
+            let targetBlock = grid[newRow][newCol];
+            
+            if (targetBlock === BLOCK_TYPES.EMPTY) {
+                // Pindah ke cell kosong
+                cat.col = newCol;
+                cat.row = newRow;
+                cat.targetCol = newCol;
+                cat.targetRow = newRow;
+                return true;
+            } else {
+                // Tambang blok!
+                if (game.energy < 1) return false;
+                
+                let value = BLOCK_VALUES[targetBlock];
+                game.score += value;
+                game.energy -= 2;
+                
+                // Update kedalaman
+                if (newRow > 1) {
+                    game.depth = Math.max(game.depth, (newRow - 1) * 3);
+                }
+                
+                // Effects
+                let blockX = newCol * gridSize + gridSize / 2;
+                let blockY = newRow * gridSize + gridSize / 2;
+                createParticles(blockX, blockY, BLOCK_COLORS[targetBlock], 12);
+                createFloatingText(blockX, blockY - 10, '+' + value, BLOCK_COLORS[targetBlock]);
+                
+                // Hapus blok
+                grid[newRow][newCol] = BLOCK_TYPES.EMPTY;
+                
+                // Setelah menambang, kucing pindah ke cell tersebut
+                cat.col = newCol;
+                cat.row = newRow;
+                cat.targetCol = newCol;
+                cat.targetRow = newRow;
+                
+                return true;
+            }
+        }
+        
+        // Game loop
+        let lastTime = 0;
+        
+        function update(currentTime) {
+            if (game.gameOver) return;
+            
+            let deltaTime = currentTime - lastTime;
+            lastTime = currentTime;
+            
+            // Handle movement dengan cooldown
+            if (currentTime - lastMoveTime >= MOVE_COOLDOWN) {
+                let moved = false;
+                
+                if (keys['arrowup'] || keys['w']) {
+                    moved = tryMove(0, -1, 'up');
+                } else if (keys['arrowdown'] || keys['s']) {
+                    moved = tryMove(0, 1, 'down');
+                } else if (keys['arrowleft'] || keys['a']) {
+                    moved = tryMove(-1, 0, 'left');
+                } else if (keys['arrowright'] || keys['d']) {
+                    moved = tryMove(1, 0, 'right');
+                }
+                
+                if (moved) {
+                    lastMoveTime = currentTime;
+                }
+            }
+            
+            // Smooth animation ke target position
+            let targetX = cat.targetCol * gridSize;
+            let targetY = cat.targetRow * gridSize;
+            cat.drawX += (targetX - cat.drawX) * 0.3;
+            cat.drawY += (targetY - cat.drawY) * 0.3;
+            
+            // Snap jika sudah dekat
+            if (Math.abs(targetX - cat.drawX) < 0.5) cat.drawX = targetX;
+            if (Math.abs(targetY - cat.drawY) < 0.5) cat.drawY = targetY;
+            
+            // Energy regeneration (pelan)
+            game.energy = Math.min(game.maxEnergy, game.energy + 0.05);
+            
+            // Check game over
+            if (game.energy <= 0) {
+                game.gameOver = true;
+                document.getElementById('finalScore').innerHTML = 
+                    `💰 Koin: <strong>${game.score}</strong><br>⬇️ Kedalaman: <strong>${Math.floor(game.depth)}m</strong>`;
+                document.getElementById('gameOver').style.display = 'block';
+            }
+            
+            updateParticles();
+            updateHUD();
+        }
+        
+        function draw() {
+            // Clear canvas dengan sky background
+            let skyGradient = ctx.createLinearGradient(0, 0, 0, gridSize);
+            skyGradient.addColorStop(0, '#87CEEB');
+            skyGradient.addColorStop(1, '#B0E0E6');
+            ctx.fillStyle = skyGradient;
+            ctx.fillRect(0, 0, canvas.width, gridSize);
+            
+            // Draw underground background
+            let undergroundGradient = ctx.createLinearGradient(0, gridSize, 0, canvas.height);
+            undergroundGradient.addColorStop(0, '#8B7355');
+            undergroundGradient.addColorStop(1, '#3E2723');
+            ctx.fillStyle = undergroundGradient;
+            ctx.fillRect(0, gridSize, canvas.width, canvas.height - gridSize);
+            
+            drawGrid();
+            
+            // Draw cat dengan smooth position
+            drawCat(cat.drawX, cat.drawY);
+            
+            drawParticles();
+            
+            // Energy bar visual di atas kucing
+            let barWidth = 36;
+            let barHeight = 4;
+            let barX = cat.drawX + (gridSize - barWidth) / 2;
+            let barY = cat.drawY - 8;
+            
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+            ctx.fillRect(barX - 1, barY - 1, barWidth + 2, barHeight + 2);
+            
+            let energyPercent = game.energy / game.maxEnergy;
+            let energyColor = energyPercent > 0.5 ? '#4CAF50' : energyPercent > 0.25 ? '#FFC107' : '#F44336';
+            ctx.fillStyle = energyColor;
+            ctx.fillRect(barX, barY, barWidth * energyPercent, barHeight);
+        }
+        
+        function gameLoop(currentTime) {
+            update(currentTime);
+            draw();
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Restart game
+        function restartGame() {
+            game = {
+                score: 0,
+                depth: 0,
+                energy: 100,
+                maxEnergy: 100,
+                gameOver: false
+            };
+            
+            cat.col = 7;
+            cat.row = 1;
+            cat.targetCol = 7;
+            cat.targetRow = 1;
+            cat.drawX = 7 * gridSize;
+            cat.drawY = 1 * gridSize;
+            cat.facing = 'down';
+            
+            particles = [];
+            floatingTexts = [];
+            
+            initGrid();
+            updateHUD();
+            
+            document.getElementById('gameOver').style.display = 'none';
+        }
+        
+        // Start game
+        initGrid();
+        updateHUD();
+        requestAnimationFrame(gameLoop);
+    </script>
+</body>
+</html>
